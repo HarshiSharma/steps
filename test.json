@@ -1,0 +1,141 @@
+{
+  "Comment": "State machine for SageMaker Pipeline orchestration with error handling",
+  "StartAt": "Check Pipeline Exists",
+  "States": {
+    "Check Pipeline Exists": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.pipelineArn",
+          "IsPresent": true,
+          "Next": "Execute Pipeline"
+        }
+      ],
+      "Default": "Create Pipeline"
+    },
+    "Create Pipeline": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createPipeline",
+      "Parameters": {
+        "PipelineName.$": "$.pipelineName",
+        "PipelineDefinition.$": "$.pipelineDefinition",
+        "RoleArn.$": "$.roleArn"
+      },
+      "Next": "Execute Pipeline",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Pipeline Creation Failed Notification"
+        }
+      ]
+    },
+    "Execute Pipeline": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:startPipelineExecution",
+      "Parameters": {
+        "PipelineName.$": "$.pipelineName"
+      },
+      "Next": "Wait For Pipeline Execution",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Pipeline Execution Failed Notification"
+        }
+      ]
+    },
+    "Wait For Pipeline Execution": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Check Pipeline Status"
+    },
+    "Check Pipeline Status": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:describeExecution",
+      "Parameters": {
+        "PipelineExecutionArn.$": "$.PipelineExecutionArn"
+      },
+      "Next": "Is Pipeline Complete",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Pipeline Status Check Failed Notification"
+        }
+      ]
+    },
+    "Is Pipeline Complete": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Status",
+          "StringEquals": "Succeeded",
+          "Next": "Pipeline Success Notification"
+        },
+        {
+          "Variable": "$.Status",
+          "StringEquals": "Failed",
+          "Next": "Pipeline Failed Notification"
+        },
+        {
+          "Variable": "$.Status",
+          "StringEquals": "Stopped",
+          "Next": "Pipeline Failed Notification"
+        }
+      ],
+      "Default": "Wait For Pipeline Execution"
+    },
+    "Pipeline Success Notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationLambdaArn}",
+        "Payload": {
+          "status": "SUCCESS",
+          "pipelineName.$": "$.pipelineName",
+          "executionId.$": "$.PipelineExecutionArn"
+        }
+      },
+      "End": true
+    },
+    "Pipeline Failed Notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationLambdaArn}",
+        "Payload": {
+          "status": "FAILED",
+          "pipelineName.$": "$.pipelineName",
+          "executionId.$": "$.PipelineExecutionArn",
+          "error": "Pipeline execution failed"
+        }
+      },
+      "End": true
+    },
+    "Pipeline Creation Failed Notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationLambdaArn}",
+        "Payload": {
+          "status": "FAILED",
+          "pipelineName.$": "$.pipelineName",
+          "error": "Pipeline creation failed"
+        }
+      },
+      "End": true
+    },
+    "Pipeline Status Check Failed Notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationLambdaArn}",
+        "Payload": {
+          "status": "FAILED",
+          "pipelineName.$": "$.pipelineName",
+          "executionId.$": "$.PipelineExecutionArn",
+          "error": "Pipeline status check failed"
+        }
+      },
+      "End": true
+    }
+  }
+}
