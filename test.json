@@ -1,24 +1,19 @@
 {
-  "StartAt": "CheckPipelineExists",
+  "StartAt": "TryCreatePipeline",
   "States": {
-    "CheckPipelineExists": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.pipelineExists",
-          "BooleanEquals": true,
-          "Next": "TriggerPipeline"
-        }
-      ],
-      "Default": "CreatePipeline"
-    },
-    "CreatePipeline": {
+    "TryCreatePipeline": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sagemaker:createPipeline",
       "Parameters": {
         "PipelineName": "$.pipelineName",
         "PipelineDefinition": "$.pipelineDefinition"
       },
+      "Catch": [
+        {
+          "ErrorEquals": ["ResourceAlreadyExists"],
+          "Next": "TriggerPipeline"
+        }
+      ],
       "Next": "TriggerPipeline"
     },
     "TriggerPipeline": {
@@ -27,6 +22,7 @@
       "Parameters": {
         "PipelineName": "$.pipelineName"
       },
+      "ResultPath": "$.PipelineExecutionArn",
       "Next": "WaitForPipelineCompletion"
     },
     "WaitForPipelineCompletion": {
@@ -40,18 +36,19 @@
       "Parameters": {
         "PipelineExecutionArn": "$.PipelineExecutionArn"
       },
+      "ResultPath": "$.statusDetails",
       "Next": "EvaluatePipelineStatus"
     },
     "EvaluatePipelineStatus": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.status",
+          "Variable": "$.statusDetails.PipelineExecutionStatus",
           "StringEquals": "Succeeded",
           "Next": "NotifySuccessLambda"
         },
         {
-          "Variable": "$.status",
+          "Variable": "$.statusDetails.PipelineExecutionStatus",
           "StringEquals": "Failed",
           "Next": "NotifyFailureLambda"
         }
