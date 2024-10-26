@@ -1,138 +1,81 @@
 {
-  "Comment": "State machine for SageMaker Pipeline orchestration with error handling",
-  "StartAt": "Check Pipeline Exists",
+  "Comment": "Step Function to handle SageMaker Pipeline execution and notification",
+  "StartAt": "CheckPipelineExistence",
   "States": {
-    "Check Pipeline Exists": {
+    "CheckPipelineExistence": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.pipelineArn",
-          "IsPresent": true,
-          "Next": "Execute Pipeline"
+          "Variable": "$.pipelineExists",
+          "BooleanEquals": true,
+          "Next": "ExecutePipeline"
         }
       ],
-      "Default": "Create Pipeline"
+      "Default": "CreatePipeline"
     },
-    "Create Pipeline": {
+    "CreatePipeline": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sagemaker:createPipeline",
       "Parameters": {
-        "PipelineName.$": "$.pipelineName",
-        "PipelineDefinition.$": "$.pipelineDefinition",
-        "RoleArn.$": "$.roleArn"
+        "PipelineDefinition": "<YOUR_PIPELINE_DEFINITION>",
+        "PipelineName": "$.pipelineName"
       },
-      "Next": "Execute Pipeline",
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "Next": "Pipeline Creation Failed Notification"
-        }
-      ]
+      "Next": "ExecutePipeline"
     },
-    "Execute Pipeline": {
+    "ExecutePipeline": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sagemaker:startPipelineExecution",
       "Parameters": {
-        "PipelineName.$": "$.pipelineName"
+        "PipelineName": "$.pipelineName"
       },
-      "Next": "Wait For Pipeline Execution",
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "Next": "Pipeline Execution Failed Notification"
-        }
-      ]
+      "Next": "MonitorPipelineExecution"
     },
-    "Wait For Pipeline Execution": {
-      "Type": "Wait",
-      "Seconds": 30,
-      "Next": "Check Pipeline Status"
-    },
-    "Check Pipeline Status": {
+    "MonitorPipelineExecution": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::sagemaker:describeExecution",
+      "Resource": "arn:aws:states:::sagemaker:describePipelineExecution",
       "Parameters": {
-        "PipelineExecutionArn.$": "$.PipelineExecutionArn"
+        "PipelineExecutionArn": "$.PipelineExecutionArn"
       },
-      "Next": "Is Pipeline Complete",
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "Next": "Pipeline Status Check Failed Notification"
-        }
-      ]
+      "End": false,
+      "ResultPath": "$.executionStatus",
+      "Next": "CheckExecutionStatus"
     },
-    "Is Pipeline Complete": {
+    "CheckExecutionStatus": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.Status",
+          "Variable": "$.executionStatus.PipelineExecutionStatus",
           "StringEquals": "Succeeded",
-          "Next": "Pipeline Success Notification"
+          "Next": "NotifySuccess"
         },
         {
-          "Variable": "$.Status",
+          "Variable": "$.executionStatus.PipelineExecutionStatus",
           "StringEquals": "Failed",
-          "Next": "Pipeline Failed Notification"
-        },
-        {
-          "Variable": "$.Status",
-          "StringEquals": "Stopped",
-          "Next": "Pipeline Failed Notification"
+          "Next": "NotifyFailure"
         }
       ],
-      "Default": "Wait For Pipeline Execution"
+      "Default": "MonitorPipelineExecution"
     },
-    "Pipeline Success Notification": {
+    "NotifySuccess": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${NotificationLambdaArn}",
+        "FunctionName": "<SUCCESS_LAMBDA_ARN>",
         "Payload": {
-          "status": "SUCCESS",
-          "pipelineName.$": "$.pipelineName",
-          "executionId.$": "$.PipelineExecutionArn"
+          "status": "pass",
+          "pipelineName": "$.pipelineName"
         }
       },
       "End": true
     },
-    "Pipeline Failed Notification": {
+    "NotifyFailure": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${NotificationLambdaArn}",
+        "FunctionName": "<FAILURE_LAMBDA_ARN>",
         "Payload": {
-          "status": "FAILED",
-          "pipelineName.$": "$.pipelineName",
-          "executionId.$": "$.PipelineExecutionArn",
-          "error": "Pipeline execution failed"
-        }
-      },
-      "End": true
-    },
-    "Pipeline Creation Failed Notification": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${NotificationLambdaArn}",
-        "Payload": {
-          "status": "FAILED",
-          "pipelineName.$": "$.pipelineName",
-          "error": "Pipeline creation failed"
-        }
-      },
-      "End": true
-    },
-    "Pipeline Status Check Failed Notification": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${NotificationLambdaArn}",
-        "Payload": {
-          "status": "FAILED",
-          "pipelineName.$": "$.pipelineName",
-          "executionId.$": "$.PipelineExecutionArn",
-          "error": "Pipeline status check failed"
+          "status": "fail",
+          "pipelineName": "$.pipelineName"
         }
       },
       "End": true
