@@ -2,80 +2,75 @@
   "StartAt": "CheckPipelineExists",
   "States": {
     "CheckPipelineExists": {
-      "Type": "Task",
-      "Resource": "arn:aws:lambda:<region>:<account-id>:function:CheckPipelineExists",
-      "ResultPath": "$.pipelineExists",
-      "Next": "PipelineExists?"
-    },
-    "PipelineExists?": {
       "Type": "Choice",
       "Choices": [
         {
           "Variable": "$.pipelineExists",
           "BooleanEquals": true,
-          "Next": "ExecutePipeline"
+          "Next": "TriggerPipeline"
         }
       ],
       "Default": "CreatePipeline"
     },
     "CreatePipeline": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:<region>:<account-id>:function:CreatePipeline",
-      "ResultPath": "$.createResult",
-      "Next": "ExecutePipeline"
-    },
-    "ExecutePipeline": {
-      "Type": "Task",
-      "Resource": "arn:aws:sagemaker:<region>:<account-id>:pipeline:<pipeline-name>",
+      "Resource": "arn:aws:states:::sagemaker:createPipeline",
       "Parameters": {
-        "PipelineExecutionConfig": {
-          "PipelineName": "<pipeline-name>",
-          "RoleArn": "<role-arn>"
-        }
+        "PipelineName": "$.pipelineName",
+        "PipelineDefinition": "$.pipelineDefinition"
       },
-      "ResultPath": "$.executionResult",
-      "Next": "MonitorExecution"
+      "Next": "TriggerPipeline"
     },
-    "MonitorExecution": {
+    "TriggerPipeline": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:startPipelineExecution",
+      "Parameters": {
+        "PipelineName": "$.pipelineName"
+      },
+      "Next": "WaitForPipelineCompletion"
+    },
+    "WaitForPipelineCompletion": {
       "Type": "Wait",
       "Seconds": 30,
-      "Next": "CheckExecutionStatus"
+      "Next": "CheckPipelineStatus"
     },
-    "CheckExecutionStatus": {
+    "CheckPipelineStatus": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:<region>:<account-id>:function:CheckPipelineStatus",
-      "ResultPath": "$.status",
-      "Next": "ExecutionComplete?"
+      "Resource": "arn:aws:states:::sagemaker:describePipelineExecution",
+      "Parameters": {
+        "PipelineExecutionArn": "$.PipelineExecutionArn"
+      },
+      "Next": "EvaluatePipelineStatus"
     },
-    "ExecutionComplete?": {
+    "EvaluatePipelineStatus": {
       "Type": "Choice",
       "Choices": [
         {
           "Variable": "$.status",
-          "StringEquals": "SUCCEEDED",
-          "Next": "SendSuccessNotification"
+          "StringEquals": "Succeeded",
+          "Next": "NotifySuccessLambda"
         },
         {
           "Variable": "$.status",
-          "StringEquals": "FAILED",
-          "Next": "SendFailureNotification"
+          "StringEquals": "Failed",
+          "Next": "NotifyFailureLambda"
         }
       ],
-      "Default": "MonitorExecution"
+      "Default": "WaitForPipelineCompletion"
     },
-    "SendSuccessNotification": {
+    "NotifySuccessLambda": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:<region>:<account-id>:function:SendNotification",
+      "Resource": "arn:aws:lambda:<region>:<account-id>:function:<success_lambda_function>",
       "Parameters": {
-        "status": "SUCCEEDED"
+        "Message": "Pipeline executed successfully"
       },
       "End": true
     },
-    "SendFailureNotification": {
+    "NotifyFailureLambda": {
       "Type": "Task",
-      "Resource": "arn:aws:lambda:<region>:<account-id>:function:SendNotification",
+      "Resource": "arn:aws:lambda:<region>:<account-id>:function:<failure_lambda_function>",
       "Parameters": {
-        "status": "FAILED"
+        "Message": "Pipeline execution failed"
       },
       "End": true
     }
