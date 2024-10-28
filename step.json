@@ -1,0 +1,91 @@
+{
+  "StartAt": "AcquireRegionLock",
+  "States": {
+    "AcquireRegionLock": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "YourDynamoDBTable",
+        "Key": {
+          "region": {
+            "S.$": "$.region"
+          }
+        },
+        "UpdateExpression": "SET #lock = :true",
+        "ExpressionAttributeNames": {
+          "#lock": "lock"
+        },
+        "ExpressionAttributeValues": {
+          ":true": {
+            "BOOL": true
+          }
+        }
+      },
+      "Next": "GetDynamoDBETag"
+    },
+    "GetDynamoDBETag": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:getItem",
+      "Parameters": {
+        "TableName": "YourDynamoDBTable",
+        "Key": {
+          "region": {
+            "S.$": "$.region"
+          }
+        }
+      },
+      "ResultPath": "$.dynamoDBResult",
+      "Next": "GetS3ETag"
+    },
+    "GetS3ETag": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::s3:getObject",
+      "Parameters": {
+        "Bucket": "YourS3Bucket",
+        "Key.$": "$.s3ObjectKey"
+      },
+      "ResultPath": "$.s3Result",
+      "Next": "CheckETagValidation"
+    },
+    "CheckETagValidation": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dynamoDBResult.Item.etag.S",
+          "StringEqualsPath": "$.s3Result.ETag",
+          "Next": "StartPipelineExecution"
+        }
+      ],
+      "Default": "Notification"
+    },
+    "StartPipelineExecution": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:startPipelineExecution",
+      "Parameters": {
+        "PipelineName": "YourPipelineName"
+      },
+      "Next": "ReleaseRegionLock"
+    },
+    "Notification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "YourLambdaFunction"
+      },
+      "Next": "ReleaseRegionLock"
+    },
+    "ReleaseRegionLock": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:deleteItem",
+      "Parameters": {
+        "TableName": "YourDynamoDBTable",
+        "Key": {
+          "region": {
+            "S.$": "$.region"
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}
